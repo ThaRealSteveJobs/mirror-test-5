@@ -82,6 +82,9 @@ pub async fn run(_repo_path: Option<String>) -> Result<(), Box<dyn Error>> {
     let mut config = {
         let providers = providers::get_available_providers();
         let selected_idx = providers::select_provider(&providers)?;
+        if providers.len() == 1 {
+            println!("Using {} as the only available AI model", providers[0].name());
+        }
         Config::new(git_analysis::wrap_provider(providers.into_iter().nth(selected_idx).unwrap()), Some(repo_path))
     };
     
@@ -91,15 +94,34 @@ pub async fn run(_repo_path: Option<String>) -> Result<(), Box<dyn Error>> {
         let mode = ui::select_mode().await?;
         mode.execute(&config, &repo).await?;
 
-        let options = ["✨ Do something else", "🤖 Switch AI model", "📁 Switch repository", "❌ Exit"];
+        // Determine available options based on number of providers
+        let providers = providers::get_available_providers();
+        let options = if providers.len() > 1 {
+            vec!["✨ Do something else", "🤖 Switch AI model", "📁 Switch repository", "❌ Exit"]
+        } else {
+            vec!["✨ Do something else", "📁 Switch repository", "❌ Exit"]
+        };
+
         match ui::show_selection_menu("What would you like to do next?", &options, 0)? {
             0 => (),  // Continue loop
-            1 => {
-                let providers = providers::get_available_providers();
+            1 if providers.len() > 1 => {
                 let selected_idx = providers::select_provider(&providers)?;
                 config = config.with_new_model(git_analysis::wrap_provider(providers.into_iter().nth(selected_idx).unwrap()));
             }
-            2 => {
+            1 => { // Repository switch when only one provider
+                let new_path = loop {
+                    let path = ui::get_repository_path(".")?;
+                    match Repository::open(&path) {
+                        Ok(new_repo) => {
+                            repo = new_repo;
+                            break path;
+                        }
+                        Err(_) => println!("Invalid git repository path. Please try again."),
+                    }
+                };
+                config = config.with_new_repo(new_path);
+            }
+            2 if providers.len() > 1 => { // Repository switch when multiple providers
                 let new_path = loop {
                     let path = ui::get_repository_path(".")?;
                     match Repository::open(&path) {
